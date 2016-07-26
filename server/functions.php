@@ -8,6 +8,7 @@ require_once("currency.php");
 require_once("stock.php");
 require_once("btc.php");
 require_once("forecast.php");
+require_once("roadtraffic.php");
 
 function array2js($a) {
 	if (is_array($a)) {
