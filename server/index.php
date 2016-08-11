@@ -10,23 +10,31 @@ function mapColor($color, $numc) {
 }
 
 $numc = isset($_GET["nc"]) ? $_GET["nc"] : 4;
+$action = isset($_GET["action"]) ? $_GET["action"] : "";
+$id = isset($_GET["id"]) ? $_GET["id"] : "";
+
+if (!strlen($id)) {
+    http_response_code(400);
+    exit(0);
+}
+
 
 // Render a screen
-if (isset($_GET["action"]) && isset($_GET["id"]) && $_GET["action"] == "render") {
+if ($action == "render") {
     header('Content-type: image/svg+xml');
-	die(renderSVG($_GET["id"])["svg"]);
+	die(renderSVG($id)["svg"]);
 }
 // Render a screen
-if (isset($_GET["action"]) && isset($_GET["id"]) && $_GET["action"] == "renderpng") {
-	$im = renderBMP($_GET["id"], $numc, 0, 0);
+if ($action == "renderpng") {
+	$im = renderBMP($id, $numc, 0, 0);
 
     header('Content-type: image/png');
 	die($im);
 }
 
 // Render a screen
-if (isset($_GET["action"]) && isset($_GET["id"]) && $_GET["action"] == "rendereink") {
-	$im = renderBMP($_GET["id"], $numc, 0, 0);
+if ($action == "rendereink") {
+	$im = renderBMP($id, $numc, 0, 0);
 
     header('Content-type: application/octet-stream');
     header('Content-Length: 61440');
