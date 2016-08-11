@@ -11,23 +11,27 @@
 
 #include "httpd.h"
 
-// Global settings, stored in RTC memory (164 bytes)
-char conf_essid[33] __attribute__ ((aligned (4)));  // Wireless ESSID
-char conf_passw[33] __attribute__ ((aligned (4)));  // WPA/WEP password
-char conf_hostn[33] __attribute__ ((aligned (4)));  // Server hostname
-int  conf_port;                                     // Server port for the service
-int  conf_path [65] __attribute__ ((aligned (4)));  // Server path to the servlet URI
+// Global settings, stored in all memories
+struct GlobalSettings {
+	char      conf_essid[32] __attribute__ ((aligned (4)));  // Wireless ESSID
+	char      conf_passw[32] __attribute__ ((aligned (4)));  // WPA/WEP password
+	char      conf_hostn[32] __attribute__ ((aligned (4)));  // Server hostname
+	char      conf_path [64] __attribute__ ((aligned (4)));  // Server path to the servlet URI
+	uint32_t  conf_port;                                     // Server port for the service
+	uint32_t  checksum;
+} global_settings;
 
 struct espconn host_conn;
 ip_addr_t host_ip;
 esp_tcp host_tcp;
 
+int sleep_time_ms = 10 * 60 * 1000;
 
 static volatile os_timer_t sleep_timer;
 void ICACHE_FLASH_ATTR put_back_to_sleep() {
 	os_printf("Goto sleep\n");
 	system_deep_sleep_set_option(1); // Full wakeup!
-	system_deep_sleep(10*60*1000*1000);
+	system_deep_sleep(sleep_time_ms*1000);
 	os_printf("Gone to sleep\n");
 }
 
@@ -40,6 +44,17 @@ void ICACHE_FLASH_ATTR power_gate_screen(int enable) {
 		gpio_output_set(BIT12, 0, BIT12, 0);
 	else
 		gpio_output_set(0, BIT12, BIT12, 0);
+}
+
+// Check if the GPIO is grounded (if yes, we clear the current the configuration)
+int ICACHE_FLASH_ATTR clearbutton_pressed() {
+	// Set GPIO4 as input mode with pull up
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4);
+	PIN_PULLUP_EN(PERIPHS_IO_MUX_GPIO4_U);
+	// Set as input now
+	gpio_output_set(0, 0, 0, BIT4);
+
+	return GPIO_INPUT_GET(GPIO_ID_PIN(4));
 }
 
 enum ScreenCommand {
@@ -85,8 +100,57 @@ void ICACHE_FLASH_ATTR screen_update(unsigned char screen_id) {
 	power_gate_screen(0);
 }
 
+int ICACHE_FLASH_ATTR parse_answer( char * pdata, unsigned short len) {
+	if (len < 13 || memcmp(pdata, "HTTP/1.0 ", 9) != 0) {
+		return 404; // No answer line found
+	}
+	return cheap_atoi(pdata+9);
+}
+
+// Advance the pointer and length while the find character is not found (if negate_test is 0), or until it's found (if negate_test is 1)
+int ICACHE_FLASH_ATTR glob_until( char find, char ** ppdata, unsigned short * len, int negate_test) {
+	while (*len && (**ppdata != find) ^ negate_test) {
+		--(*len);
+                ++(*ppdata);
+	}
+	return *len != 0;
+}
+
+int ICACHE_FLASH_ATTR parse_header( char ** ppdata, unsigned short * len, char ** header, char ** value) {
+	*header = *ppdata;
+	while (*len && **ppdata != ':') {
+		if (**ppdata == '\r' && *len && *(*ppdata+1) == '\n') {
+			(*len) -= 2;
+			(*ppdata) += 2;
+			return 0; // End of headers found
+		}
+		--(*len);
+		++(*ppdata);
+	}
+	if (!*len)
+		return -1; // Unexpected end of stream
+
+	**ppdata = '\0'; // Make it zero terminated so we can parse it
+	--(*len);
+	++(*ppdata);
+
+	// Strip whitespace too
+	glob_until(' ', ppdata, len, 1);
+	*value = *ppdata;
+
+	if (!glob_until('\n', ppdata, len, 0))
+		return -1; // Unexpected end of stream
+
+	*(*ppdata - 1) = '\0'; // Make it zero terminated too
+	--(*len);
+	++(*ppdata);
+	return 1; // Header found
+}
+
 void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len) {
 	struct espconn *conn = arg;
+	char *header, *value;
+	int ret = 0, content_len = len;
 
 	static char screen_on = 0;
 	if (!screen_on) {
@@ -95,29 +159,42 @@ void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len
 		// Prepare screen! Tell image is coming!
 		power_gate_screen(1);
 		delay_ms(50);
-		spi_tx8(HSPI, 0x40);
 	}
 
 	// Scan through the data to strip headers!
-	static char header_found = 0;
-	static char lastc[4] = {0};
-	while (len && !header_found) {
-		lastc[0] = lastc[1];
-		lastc[1] = lastc[2];
-		lastc[2] = lastc[3];
-		lastc[3] = *pdata;
-		if (memcmp(lastc, "\r\n\r\n", 4) == 0) {
-			header_found = 1;
-		}
+	if ((ret = parse_answer(pdata, len)) > 302) {
+		os_printf("Bad answer from server: %d\n", ret);
+		// The given configuration is not valid, let's drop it from the settings
+		os_memset(&global_settings, 0, sizeof(global_settings));
+		store_settings();
+		spi_tx8(HSPI, DispConnectError);
+		put_back_to_sleep();
+		return;
+	}
+	// Tell image is coming!
+	spi_tx8(HSPI, 0x40);
+	// Skip answer line (we don't care about the result here)
+	glob_until('\n', &pdata, &len, 0);
 
-		pdata++;
-		len--;
+	// Then parse all header lines, and act accordingly
+	while ((ret = parse_header(&pdata, &len, &header, &value)) > 0) {
+#define STREQ(X,Y) memcmp(X, Y, sizeof(Y)) == 0
+		if (STREQ(header, "Sleep-Duration-Ms")) {
+			sleep_time_ms = cheap_atoi(value);
+		}
+		else if (STREQ(header, "Content-Length")) {
+			content_len = cheap_atoi(value);
+		}
+#undef STREQ
+		os_printf("Got header %s with value %s\n", header, value);
 	}
 	
-	while (len--) {
-		spi_tx8(HSPI, *pdata++);
-		if (!(len & 4095))
-			system_soft_wdt_feed();
+	if (ret == 0) {
+		while (len--) {
+			spi_tx8(HSPI, *pdata++);
+			if (!(len & 4095))
+				system_soft_wdt_feed();
+		}
 	}
 }
 
@@ -131,7 +208,7 @@ void ICACHE_FLASH_ATTR tcp_connected(void *arg)
 	espconn_regist_recvcb(conn, data_received);
 
 	char buffer[256];
-	os_sprintf(buffer, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", conf_path, conf_hostn);
+	os_sprintf(buffer, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", global_settings.conf_path, global_settings.conf_hostn);
 	
 	espconn_send(conn, buffer, os_strlen(buffer));
 }
@@ -178,8 +255,8 @@ void ICACHE_FLASH_ATTR dns_done_cb( const char *name, ip_addr_t *ipaddr, void *a
 		conn->proto.tcp = &host_tcp;
 		espconn_regist_time(&host_tcp, 30, 0);
 		conn->proto.tcp->local_port = espconn_port();
-		conn->proto.tcp->remote_port = conf_port;
-		conn->proto.tcp->remote_port = conf_port;
+		conn->proto.tcp->remote_port = global_settings.conf_port;
+		conn->proto.tcp->remote_port = global_settings.conf_port;
 		os_memcpy( conn->proto.tcp->remote_ip, &ipaddr->addr, 4 );
 
 		espconn_regist_connectcb(conn, tcp_connected);
@@ -215,7 +292,7 @@ void ICACHE_FLASH_ATTR wifi_callback( System_Event_t *evt ) {
 						IP2STR(&evt->event_info.got_ip.gw));
 			os_printf("\n");
 			
-			espconn_gethostbyname (&host_conn, conf_hostn, &host_ip, dns_done_cb);
+			espconn_gethostbyname (&host_conn, global_settings.conf_hostn, &host_ip, dns_done_cb);
 			break;
 		}
 
@@ -228,47 +305,55 @@ void ICACHE_FLASH_ATTR wifi_callback( System_Event_t *evt ) {
 	}
 }
 
+int ICACHE_FLASH_ATTR check_settings_checksum(uint32_t * checksum) {
+	uint32_t * d = (uint32_t*)&global_settings;
+	uint32_t sum = 0x2BADFACE; // Must not be zero
+	for(int i = 0; i < (sizeof(global_settings) - sizeof(uint32_t))/sizeof(uint32_t); i++) {
+		sum += d[i];
+	}
+	if (checksum) *checksum = sum;
+	return sum == global_settings.checksum;
+}
+
+
 int ICACHE_FLASH_ATTR recover_settings() {
-	// Try to recover data from the RTC memory
-	// We have 512 bytes of data we can use (regs 64 to 192)
-	// We are gonna save two magic words in 64 and 191 and check for them
-	// if the battery was gone, the value will be random
+	// Try to recover data from the RTC memory first
+	system_rtc_mem_read(64, &global_settings, sizeof(global_settings));
+	if (check_settings_checksum(0))
+		return 1;
 
-	uint32_t magic1, magic2;
-	int r = system_rtc_mem_read(64,  &magic1, 4);
-	int w = system_rtc_mem_read(191, &magic2, 4);
+	// Then read flash
+	spi_flash_read(0x3C000, (uint32 *)&global_settings, sizeof(global_settings));
+	if (check_settings_checksum(0))
+		return 1;
 
-	if (magic1 != 0xDEADBEEF || magic2 != 0x00C0FFEE)
-		return 0;
+	// Then try shadow flash too
+	spi_flash_read(0x3D000, (uint32 *)&global_settings, sizeof(global_settings));
+	if (check_settings_checksum(0))
+		return 1;
 
-	// Read essid + pass + server config
-	system_rtc_mem_read(68, conf_essid, 32);
-	system_rtc_mem_read(76, conf_passw, 32);
-	system_rtc_mem_read(84, conf_hostn, 32);
-	system_rtc_mem_read(92, conf_path,  64);
-	system_rtc_mem_read(108,&conf_port,  4);
-
-	conf_essid[32] = 0;
-	conf_passw[32] = 0;
-	conf_hostn[32] = 0;
-	conf_path [64] = 0;
-
-	return 1; // Done!
+	// Dump the RTC memory here
+	uint32_t w = 0;
+	os_printf("Failed to restore settings, RTC dump:\n");
+	for (int i = 64; i < 192; i++) {
+		if ((i % 16) == 0) os_printf("\n%04x ", i);
+		system_rtc_mem_read(64,  &w, 4);
+		os_printf("%08x ", w);
+	}
+	os_printf("\n");
+	return 0; // Done!
 }
 
 void ICACHE_FLASH_ATTR store_settings() {
 	// First write the config and then the magic
-	os_printf("Store %s %s\n", conf_essid, conf_passw);
-
-	system_rtc_mem_write(68, conf_essid, 32);
-	system_rtc_mem_write(76, conf_passw, 32);
-	system_rtc_mem_write(84, conf_hostn, 32);
-	system_rtc_mem_write(92, conf_path,  32);
-	system_rtc_mem_write(108,&conf_port,  4);
-
-	uint32_t magic1 = 0xDEADBEEF, magic2 = 0x00C0FFEE;
-	system_rtc_mem_write(64,  &magic1, 4);
-	system_rtc_mem_write(191, &magic2, 4);
+	os_printf("Store %s %s\n", global_settings.conf_essid, global_settings.conf_passw);
+	// First in flash
+	spi_flash_erase_sector(0x3C);
+	spi_flash_write(0x3C000, (uint32_t*)&global_settings, sizeof(global_settings));
+	spi_flash_erase_sector(0x3D);
+	spi_flash_write(0x3D000, (uint32_t*)&global_settings, sizeof(global_settings));
+	// Then in RTC mem
+	system_rtc_mem_write(64, &global_settings, sizeof(global_settings));
 }
 
 
@@ -325,14 +410,20 @@ unsigned ICACHE_FLASH_ATTR get_index(char * buffer, const char * body) {
 unsigned ICACHE_FLASH_ATTR push_settings(char * buffer, const char * body) {
 	os_printf("TOPARSE %s\n", body);
 	// Parse body variables
-	parse_form_s(body, conf_essid, "essid");
-	parse_form_s(body, conf_passw, "pass");
-	parse_form_s(body, conf_hostn, "host");
-	parse_form_s(body, conf_path,  "path");
-	conf_port = parse_form_d(body, "port");
+	parse_form_s(body, global_settings.conf_essid, "essid");
+	parse_form_s(body, global_settings.conf_passw, "pass");
+	parse_form_s(body, global_settings.conf_hostn, "host");
+	parse_form_s(body, global_settings.conf_path,  "path");
+	global_settings.conf_port = parse_form_d(body, "port");
+#define Z(X) global_settings.X[sizeof(global_settings.X) - 1] = '\0'
+	Z(conf_essid); Z(conf_passw); Z(conf_hostn); Z(conf_path);
+#undef Z
 
-	os_printf("Parsed %s %s %s\n", conf_essid, conf_passw, conf_hostn);
+	os_printf("Parsed %s %s %s\n", global_settings.conf_essid, global_settings.conf_passw, global_settings.conf_hostn);
+	os_printf("Parsed path: %s\n", global_settings.conf_path);
 
+	// Compute checksum
+	check_settings_checksum(&global_settings.checksum);
 	// Update settings
 	store_settings();
 
@@ -352,9 +443,9 @@ t_url_desc urls[] = {
 
 
 void ICACHE_FLASH_ATTR start_web_server() {
-	// Set SoftAP+station mode
-	if (wifi_get_opmode() != 3)
-		wifi_set_opmode(3);
+	// Set SoftAP mode
+	if (wifi_get_opmode() != 2)
+		wifi_set_opmode(2);
 
 	// Setup AP mode
 	struct softap_config config;
@@ -378,9 +469,10 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 	gpio_init();
 
 	// Set UART0 to high speed!
-	uart_div_modify( 0, UART_CLK_FREQ / ( 115200 ) ); // More decent than 460800 ) );  // 921600
+	uart_div_modify( 0, UART_CLK_FREQ / ( 74880 ) ); // More decent than 460800 ) );  // 921600
 
 	os_printf("Booting...\n");
+	os_memset(&global_settings, 0, sizeof(global_settings));
 
 	// Use GPIO2 as UART0 output as well :)
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U0TXD_BK);
@@ -393,17 +485,18 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 	spi_clock(HSPI, 1, 20);  // Div by 20 to get 4MBps for now
 
 	// First of all read the RTC memory and check whether data is valid.
+	os_printf("Clear config setting: %d (use GPIO4 to gnd to clear)\n", clearbutton_pressed());
 	if (recover_settings()) {
 		// We got some settings, now go and connect
 		static struct station_config config;
 		wifi_station_set_hostname("einkdisp");
 		wifi_set_opmode_current(STATION_MODE);
 
-		os_printf("Info %s, %s, %s, %d\n", conf_passw, conf_essid, conf_hostn, conf_port);
+		os_printf("Info %s, %s, %s, %d\n", global_settings.conf_passw, global_settings.conf_essid, global_settings.conf_hostn, global_settings.conf_port);
 	
 		config.bssid_set = 0;
-		os_memcpy(&config.ssid,     conf_essid, 32);
-		os_memcpy(&config.password, conf_passw, 33);
+		os_memcpy(&config.ssid,     global_settings.conf_essid, sizeof(global_settings.conf_essid));
+		os_memcpy(&config.password, global_settings.conf_passw, sizeof(global_settings.conf_passw));
 		wifi_station_set_config(&config);
 
 		// Connect to the server, get some stuff and process it!
