@@ -337,7 +337,7 @@ int ICACHE_FLASH_ATTR recover_settings() {
 	os_printf("Failed to restore settings, RTC dump:\n");
 	for (int i = 64; i < 192; i++) {
 		if ((i % 16) == 0) os_printf("\n%04x ", i);
-		system_rtc_mem_read(64,  &w, 4);
+		system_rtc_mem_read(i,  &w, 4);
 		os_printf("%08x ", w);
 	}
 	os_printf("\n");
@@ -486,6 +486,9 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 
 	// First of all read the RTC memory and check whether data is valid.
 	os_printf("Clear config setting: %d (use GPIO4 to gnd to clear)\n", clearbutton_pressed());
+	if (clearbutton_pressed() == 0)
+		store_settings();  // This will nuke the saved settings
+
 	if (recover_settings()) {
 		// We got some settings, now go and connect
 		static struct station_config config;
