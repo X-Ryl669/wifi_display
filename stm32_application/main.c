@@ -183,8 +183,6 @@ int main() {
 	USART_Write("Received cmd: "); USART_WriteInt(cmd); USART_Write("\r\n");
 
 
-
-
 	// Bit   7 defines direction hint (which can be ignored by the device)
 	// Bit   6 tells whether to show a predefined picture (0) or to load a picture (1)
 	//         If the bit is 1, it will be followed by 120000 bytes with the picture content
