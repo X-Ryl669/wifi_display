@@ -79,6 +79,7 @@ void ICACHE_FLASH_ATTR delay_ms(int ms) {
 
 void ICACHE_FLASH_ATTR screen_update(unsigned char screen_id) {
 	// Update the screen!
+	os_printf("SCREENUPDATE %d\n");
 
 	// Flush the FIFO, to make sure no characters are in the buffer
 	UART_ResetFifo(0);
@@ -101,7 +102,7 @@ void ICACHE_FLASH_ATTR screen_update(unsigned char screen_id) {
 }
 
 int ICACHE_FLASH_ATTR parse_answer( char * pdata, unsigned short len) {
-	if (len < 13 || memcmp(pdata, "HTTP/1.0 ", 9) != 0) {
+	if (len < 13 || memcmp(pdata, "HTTP/1.", 7) != 0) {
 		return 404; // No answer line found
 	}
 	return cheap_atoi(pdata+9);
@@ -118,15 +119,12 @@ int ICACHE_FLASH_ATTR glob_until( char find, char ** ppdata, unsigned short * le
 
 int ICACHE_FLASH_ATTR parse_header( char ** ppdata, unsigned short * len, char ** header, char ** value) {
 	*header = *ppdata;
-	while (*len && **ppdata != ':') {
-		if (**ppdata == '\r' && *len && *(*ppdata+1) == '\n') {
-			(*len) -= 2;
-			(*ppdata) += 2;
-			return 0; // End of headers found
-		}
-		--(*len);
-		++(*ppdata);
+	if (**ppdata == '\r' && *len && *(*ppdata+1) == '\n') {
+		(*len) -= 2;
+		(*ppdata) += 2;
+		return 0; // End of headers found
 	}
+	glob_until(':', ppdata, len, 0);
 	if (!*len)
 		return -1; // Unexpected end of stream
 
@@ -147,6 +145,7 @@ int ICACHE_FLASH_ATTR parse_header( char ** ppdata, unsigned short * len, char *
 	return 1; // Header found
 }
 
+uint32_t sentBytes = 0;
 void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len) {
 	struct espconn *conn = arg;
 	char *header, *value;
@@ -161,40 +160,56 @@ void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len
 		delay_ms(50);
 	}
 
-	// Scan through the data to strip headers!
-	if ((ret = parse_answer(pdata, len)) > 302) {
-		os_printf("Bad answer from server: %d\n", ret);
-		// The given configuration is not valid, let's drop it from the settings
-		os_memset(&global_settings, 0, sizeof(global_settings));
-		store_settings();
-		spi_tx8(HSPI, DispConnectError);
-		put_back_to_sleep();
-		return;
+	os_printf("Data received: %d bytes\n", len);
+	static int topline_received = 0;
+	if (!topline_received) {
+		// Scan through the data to strip headers!
+		if ((ret = parse_answer(pdata, len)) > 302) {
+			os_printf("Bad answer from server: %d from %s\n", ret, pdata);
+			spi_tx8(HSPI, DispConnectError);
+			put_back_to_sleep();
+			return;
+		}
+		topline_received = 1;
+		// Skip answer line (we don't care about the result here)
+		glob_until('\n', &pdata, &len, 0);
+		pdata++; len--;
 	}
-	// Tell image is coming!
-	spi_tx8(HSPI, 0x40);
-	// Skip answer line (we don't care about the result here)
-	glob_until('\n', &pdata, &len, 0);
 
-	// Then parse all header lines, and act accordingly
-	while ((ret = parse_header(&pdata, &len, &header, &value)) > 0) {
+	static int header_received = 0;
+	if (!header_received) {
+		// Then parse all header lines, and act accordingly
+		while ((ret = parse_header(&pdata, &len, &header, &value)) > 0) {
 #define STREQ(X,Y) memcmp(X, Y, sizeof(Y)) == 0
-		if (STREQ(header, "Sleep-Duration-Ms")) {
-			sleep_time_ms = cheap_atoi(value);
+			if (STREQ(header, "Sleep-Duration-Ms")) {
+				sleep_time_ms = cheap_atoi(value);
+			}
+			else if (STREQ(header, "Content-Length")) {
+				content_len = cheap_atoi(value);
+			}
+	#undef STREQ
+			os_printf("Got header %s with value %s\n", header, value);
 		}
-		else if (STREQ(header, "Content-Length")) {
-			content_len = cheap_atoi(value);
+		if (ret == 0) {
+			header_received = 1;
+			// Tell image is coming!
+			spi_tx8(HSPI, 0x40);
 		}
-#undef STREQ
-		os_printf("Got header %s with value %s\n", header, value);
 	}
 	
-	if (ret == 0) {
+	if (header_received) {
+//		pp_soft_wdt_stop();
+//		os_printf("Sending with len %d and first byte %02x\n", len, *pdata);
+//		os_printf("Current sleep time is %d\n", sleep_time_ms);
+
+
 		while (len--) {
 			spi_tx8(HSPI, *pdata++);
+			sentBytes++;
 			if (!(len & 4095))
 				system_soft_wdt_feed();
 		}
+//		pp_soft_wdt_restart();
 	}
 }
 
@@ -220,7 +235,7 @@ void ICACHE_FLASH_ATTR tcp_disconnected(void *arg) {
 	delay_ms(3500);
 	power_gate_screen(0);
 
-	os_printf( "%s\n", __FUNCTION__ );
+	os_printf( "%s %d\n", __FUNCTION__, sentBytes );
 	wifi_station_disconnect();
 
 	put_back_to_sleep();
@@ -481,8 +496,8 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 	spi_init(HSPI);
 	spi_mode(HSPI, 1, 1);
 	spi_init_gpio(HSPI, 0);
-//	spi_clock(HSPI, 6, 29);  // Div by 174 to get 406kbps
-	spi_clock(HSPI, 1, 20);  // Div by 20 to get 4MBps for now
+	spi_clock(HSPI, 6, 29);  // Div by 174 to get 406kbps
+//	spi_clock(HSPI, 1, 20);  // Div by 20 to get 4MBps for now
 
 	// First of all read the RTC memory and check whether data is valid.
 	os_printf("Clear config setting: %d (use GPIO4 to gnd to clear)\n", clearbutton_pressed());
