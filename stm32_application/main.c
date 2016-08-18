@@ -38,19 +38,31 @@ void initHW() {
 
 	//GPIO_PinRemapConfig(GPIO_FullRemap_USART3, DISABLE);
 	//GPIO_PinRemapConfig(GPIO_PartialRemap_USART3, ENABLE);
+
+	// Prepare to switch on the leds
+	GPIO_InitTypeDef gpioConfig;
+	gpioConfig.GPIO_Mode = GPIO_Mode_Out_PP;
+	gpioConfig.GPIO_Pin = GPIO_Pin_7;
+	gpioConfig.GPIO_Speed = GPIO_Speed_2MHz;
+	GPIO_Init(GPIOB, &gpioConfig);
+
 }
 
 void sync_blink() {
 	// Some blink
 	int i;
-	GPIO_SetBits(GPIOB, GPIO_Pin_3);
+	GPIO_SetBits(GPIOB, GPIO_Pin_7);
 	for (i = 0; i < 3000000; i++) { asm volatile(""); }
-	GPIO_ResetBits(GPIOB, GPIO_Pin_3);
+	GPIO_ResetBits(GPIOB, GPIO_Pin_7);
 	for (i = 0; i < 3000000; i++) { asm volatile(""); }
-	GPIO_SetBits(GPIOB, GPIO_Pin_3);
+	GPIO_SetBits(GPIOB, GPIO_Pin_7);
 	for (i = 0; i < 3000000; i++) { asm volatile(""); }
-	GPIO_ResetBits(GPIOB, GPIO_Pin_3);
+	GPIO_ResetBits(GPIOB, GPIO_Pin_7);
 	for (i = 0; i < 3000000; i++) { asm volatile(""); }
+}
+
+void blink(int v) {
+	v ? GPIO_SetBits(GPIOB, GPIO_Pin_7) : GPIO_ResetBits(GPIOB, GPIO_Pin_7);
 }
 
 const void * image_table[8] =
@@ -70,10 +82,10 @@ unsigned char scratch[60*1024]; // __attribute__((section(".extdata"), used));
 void USART_Initialize() {
 	USART_InitTypeDef usartConfig;
 
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1 | RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO, ENABLE);
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1 | RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO | RCC_APB2Periph_GPIOB, ENABLE);
 	USART_Cmd(USART1, ENABLE);
 
-	usartConfig.USART_BaudRate = 9600;
+	usartConfig.USART_BaudRate = 115200;
 	usartConfig.USART_WordLength = USART_WordLength_8b;
 	usartConfig.USART_StopBits = USART_StopBits_1;
 	usartConfig.USART_Parity = USART_Parity_No;
@@ -99,7 +111,7 @@ void USART_Write(const char * txt) {
 	while (*txt) {
 		while (!(USART1->SR & USART_SR_TXE)) {}
 		USART_SendData(USART1, *txt);
-		txt++
+		++txt;
 	}
 }
 void USART_WriteInt(int v) {
@@ -124,7 +136,7 @@ unsigned char USART_ReadByteSync(USART_TypeDef *USARTx) {
 void SPI_Initialize() {
 	// Configure PB3 & PB5 for SPI slave
 	GPIO_InitTypeDef GPIO_InitStructure;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_10MHz;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_5;
 	GPIO_Init(GPIOB, &GPIO_InitStructure);
@@ -141,7 +153,7 @@ void SPI_Initialize() {
 	SPI_InitStructure.SPI_DataSize = SPI_DataSize_8b;
 	SPI_InitStructure.SPI_CPOL = SPI_CPOL_High;
 	SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge;
-	SPI_InitStructure.SPI_NSS = SPI_NSS_Soft;
+	SPI_InitStructure.SPI_NSS = SPI_NSS_Hard;
 	SPI_InitStructure.SPI_FirstBit = SPI_FirstBit_MSB;
 
 	SPI_RxFIFOThresholdConfig(SPI1, SPI_RxFIFOThreshold_QF);
@@ -161,12 +173,16 @@ int main() {
 
 	SPI_Initialize();
 	USART_Initialize();
-	USART_Write("Started!\n");
+	sync_blink();
+
+	USART_Write("Started "); USART_WriteInt(0xDEADFACE); USART_Write("\r\n");
 
 	// Wait for the first byte, that tells us what to do:
 	while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET);
 	unsigned char cmd = SPI_I2S_ReceiveData(SPI1);
-	USART_Write("Received cmd: "); USART_WriteInt(cmd); USART_Write("\n");
+	USART_Write("Received cmd: "); USART_WriteInt(cmd); USART_Write("\r\n");
+
+
 
 
 	// Bit   7 defines direction hint (which can be ignored by the device)
@@ -182,21 +198,21 @@ int main() {
 
 	if (!int_image) {
 		// Keep reading for external image!
-		unsigned int spointer = 0;
+		unsigned int spointer = 0, bl = 1;
 		while (spointer < sizeof(scratch)) {
 			// Read buffer to scratch!
 			while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET) { /*__WFE(); */ }
 			scratch[spointer++] = SPI_I2S_ReceiveData(SPI1);
-			if ((spointer % 64) == 0) { USART_Write("rcv ptr: "); USART_WriteInt(spointer); USART_Write("\n"); }
+			if ((spointer & 0x1FFF) == 0) { blink(bl); bl = !bl; } //{ USART_Write("rcv ptr: "); USART_WriteInt(spointer); USART_Write("\r\n"); }
 		}
-		USART_Write("Done receiving picture\n");
+		USART_Write("Done receiving picture\r\n");
 	}
 	else {
 		// Copy the internal compressed image
 		memcpy(scratch, image_table[imageidx], sizeof(scratch));
 	}
 
-        USART_Write("Init screen\n");
+        USART_Write("Init screen\r\n");
 	// Initialize tables (according to direction)
 	einkd_init(direction);
 
@@ -207,11 +223,10 @@ int main() {
 
 	RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO | RCC_APB2Periph_SPI1, DISABLE);
 	einkd_deinit();
-	USART_Write("Done setting the screen, sleeping now\n");
+	USART_Write("Done setting the screen, sleeping now\r\n");
 
 	// Turn ourselves OFF, hopefully save some power before final power gate off
 	PWR_EnterSTOPMode(PWR_Regulator_LowPower, PWR_STOPEntry_WFI);
-
 	while (1);
 
 	return 0;
