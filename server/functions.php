@@ -60,6 +60,7 @@ function renderSVG($id) {
 	$scr = file_get_contents("screens/".$id);
 	$scr = json_decode($scr, true);
 
+
 	$body = array();
 	for ($i = 0; $i < count($scr["widgets"]); $i++) {
 		$widget = $scr["widgets"][$i];

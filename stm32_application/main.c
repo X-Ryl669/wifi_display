@@ -77,7 +77,15 @@ const void * image_table[8] =
 	invalid_image
 };
 
+__IO uint16_t RxIdx = 0;
 unsigned char scratch[60*1024]; // __attribute__((section(".extdata"), used));
+
+// Interrupt routine make some advance to the 
+void SPI1_Handler(void)
+{
+	scratch[RxIdx++] = SPI_I2S_ReceiveData(SPI1);
+}
+
 
 void USART_Initialize() {
 	USART_InitTypeDef usartConfig;
@@ -133,10 +141,30 @@ unsigned char USART_ReadByteSync(USART_TypeDef *USARTx) {
     return (unsigned char)USART_ReceiveData(USARTx);
 }
 
+/**
+  * @brief  Configure the nested vectored interrupt controller.
+  * @param  None
+  * @retval None
+  */
+void NVIC_Configuration(void)
+{
+  NVIC_InitTypeDef NVIC_InitStructure;
+
+  /* 1 bit for pre-emption priority, 3 bits for subpriority */
+  NVIC_PriorityGroupConfig(NVIC_PriorityGroup_1);
+
+  /* Configure and enable SPI_SLAVE interrupt --------------------------------*/
+  NVIC_InitStructure.NVIC_IRQChannel = SPI1_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+}
+
 void SPI_Initialize() {
 	// Configure PB3 & PB5 for SPI slave
 	GPIO_InitTypeDef GPIO_InitStructure;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_10MHz;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_5;
 	GPIO_Init(GPIOB, &GPIO_InitStructure);
@@ -160,6 +188,8 @@ void SPI_Initialize() {
   
 	/* Configure SPI1 && enable */
 	SPI_Init(SPI1, &SPI_InitStructure);
+
+
 	SPI_Cmd(SPI1, ENABLE);
 }
 
@@ -171,6 +201,7 @@ int main() {
 	// That means only 60KB RAM, either B/W images (1bit) or compressed images!
 	//FSMC_SRAM_Init();
 
+        NVIC_Configuration();
 	SPI_Initialize();
 	USART_Initialize();
 	sync_blink();
@@ -180,6 +211,11 @@ int main() {
 	// Wait for the first byte, that tells us what to do:
 	while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET);
 	unsigned char cmd = SPI_I2S_ReceiveData(SPI1);
+
+        /* Enable SPI_SLAVE RXNE interrupt for the whole buffer */
+	SPI_Cmd(SPI1, DISABLE);
+  	SPI_I2S_ITConfig(SPI1, SPI_I2S_IT_RXNE, ENABLE);
+	SPI_Cmd(SPI1, ENABLE);
 	USART_Write("Received cmd: "); USART_WriteInt(cmd); USART_Write("\r\n");
 
 
@@ -197,13 +233,14 @@ int main() {
 	if (!int_image) {
 		// Keep reading for external image!
 		unsigned int spointer = 0, bl = 1;
-		while (spointer < sizeof(scratch)) {
-			// Read buffer to scratch!
-			while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET) { /*__WFE(); */ }
-			scratch[spointer++] = SPI_I2S_ReceiveData(SPI1);
-			if ((spointer & 0x1FFF) == 0) { blink(bl); bl = !bl; } //{ USART_Write("rcv ptr: "); USART_WriteInt(spointer); USART_Write("\r\n"); }
+		while (RxIdx < sizeof(scratch)) {
+			spointer++;
+			if ((RxIdx & 0x1FFF) == 0) { blink(bl); bl = RxIdx >> 11; }
+                        if ((RxIdx & 0x1FFF) == 1) bl = !bl;
+			if (spointer > 0x1000000) { USART_Write("rcv ptr: "); USART_WriteInt(RxIdx-1); USART_Write("="); USART_WriteInt(scratch[RxIdx-1]); USART_Write("\r\n"); spointer = 0; }
 		}
 		USART_Write("Done receiving picture\r\n");
+		blink(0);
 	}
 	else {
 		// Copy the internal compressed image

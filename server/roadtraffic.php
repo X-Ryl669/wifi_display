@@ -70,7 +70,7 @@ class TrafficProvider implements ServiceProvider {
 		if ($this->apiKey == "") return sprintf('<svg width="%d" height="%d" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg>', $this->width, $this->height);
 		// Gather information from BingMap
 		$raw = file_get_contents(
-			"http://dev.virtualearth.net/REST/V1/Imagery/Map/Road/".$this->latitude."%2C".$this->longitude."/12?mapSize=".$this->width.",".$this->height."&mapLayer=TrafficFlow&format=png&key=".$this->apiKey
+			"http://dev.virtualearth.net/REST/V1/Imagery/Map/Road/".$this->latitude."%2C".$this->longitude."/12?mapSize=".(int)$this->width.",".(int)$this->height."&mapLayer=TrafficFlow&format=png&key=".$this->apiKey
 		);
 		if (strlen($raw) == 0) return sprintf('<svg width="%d" height="%d" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg>', $this->width, $this->height);
 
