@@ -5,6 +5,7 @@
 
 #include <stm32f10x/stm32f10x.h>
 #include <stm32f10x/stm32f10x_pwr.h>
+#include <stm32f10x/stm32f10x_dma.h>
 #include "gde043a2.h"
 #include "sram.h"
 #include "uart.h"
@@ -86,14 +87,40 @@ void SPI1_Handler(void)
 	scratch[RxIdx++] = SPI_I2S_ReceiveData(SPI1);
 }
 
+/**
+  * @brief  Configures the DMA.
+  * @param  None
+  * @retval None
+  */
+void DMA_Configuration(void)
+{
+  DMA_InitTypeDef DMA_InitStructure;
+
+  /* USART1 RX DMA1 Channel (triggered by USART1 Rx event) Config */
+  RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE);
+  DMA_DeInit(DMA1_Channel5);
+  DMA_InitStructure.DMA_PeripheralBaseAddr = 0x40013804;
+  DMA_InitStructure.DMA_MemoryBaseAddr = (uint32_t)scratch;
+  DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralSRC;
+  DMA_InitStructure.DMA_BufferSize = sizeof(scratch);
+  DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
+  DMA_InitStructure.DMA_MemoryInc = DMA_MemoryInc_Enable;
+  DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
+  DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_Byte;
+  DMA_InitStructure.DMA_Mode = DMA_Mode_Normal;
+  DMA_InitStructure.DMA_Priority = DMA_Priority_VeryHigh;
+  DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;
+  DMA_Init(DMA1_Channel5, &DMA_InitStructure);
+
+}
+
 
 void USART_Initialize() {
 	USART_InitTypeDef usartConfig;
 
 	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1 | RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO | RCC_APB2Periph_GPIOB, ENABLE);
-	USART_Cmd(USART1, ENABLE);
 
-	usartConfig.USART_BaudRate = 115200;
+	usartConfig.USART_BaudRate = 460800; //115200;
 	usartConfig.USART_WordLength = USART_WordLength_8b;
 	usartConfig.USART_StopBits = USART_StopBits_1;
 	usartConfig.USART_Parity = USART_Parity_No;
@@ -106,13 +133,27 @@ void USART_Initialize() {
 	// PA9 = USART1.TX => Alternative Function Output
 	gpioConfig.GPIO_Mode = GPIO_Mode_AF_PP;
 	gpioConfig.GPIO_Pin = GPIO_Pin_9;
-	gpioConfig.GPIO_Speed = GPIO_Speed_2MHz;
+	gpioConfig.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_Init(GPIOA, &gpioConfig);
 
 	// PA10 = USART1.RX => Input
 	gpioConfig.GPIO_Mode = GPIO_Mode_IN_FLOATING;
 	gpioConfig.GPIO_Pin = GPIO_Pin_10;
 	GPIO_Init(GPIOA, &gpioConfig);
+
+	USART_Cmd(USART1, ENABLE);
+}
+
+void USART_StartDMA() {
+	USART_Cmd(USART1, DISABLE);
+	/* Enable USART1 DMA Rx request */
+	USART_DMACmd(USART1, USART_DMAReq_Rx, ENABLE);
+
+	/* Enable USARTy RX DMA1 Channel */
+	DMA_Cmd(DMA1_Channel5, ENABLE);
+
+	// Reenable UART1
+	USART_Cmd(USART1, ENABLE);
 }
 
 void USART_Write(const char * txt) {
@@ -136,8 +177,10 @@ void USART_WriteInt(int v) {
 	USART_Write(intV);
 }
 
-unsigned char USART_ReadByteSync(USART_TypeDef *USARTx) {
-    while ((USARTx->SR & USART_SR_RXNE) == 0) {}
+unsigned char USART_ReadByteSync(USART_TypeDef *USARTx, unsigned * waiter) {
+    unsigned count = 0xFF00000;
+    while ((USARTx->SR & USART_SR_RXNE) == 0 && --count) {}
+    if (!count && waiter) *waiter = 1;
     return (unsigned char)USART_ReceiveData(USARTx);
 }
 
@@ -193,22 +236,26 @@ void SPI_Initialize() {
 	SPI_Cmd(SPI1, ENABLE);
 }
 
-int main() {
+ int main() {
 	// Init HW for the micro
 	initHW();
 
 	// Fuckin SRAM memory has stopped working
 	// That means only 60KB RAM, either B/W images (1bit) or compressed images!
 	//FSMC_SRAM_Init();
-
+#ifdef UseSPI
         NVIC_Configuration();
 	SPI_Initialize();
+#endif
+        DMA_Configuration();
 	USART_Initialize();
 	sync_blink();
 
 	USART_Write("Started "); USART_WriteInt(0xDEADFACE); USART_Write("\r\n");
 
 	// Wait for the first byte, that tells us what to do:
+#ifdef UseSPI
+
 	while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET);
 	unsigned char cmd = SPI_I2S_ReceiveData(SPI1);
 
@@ -216,7 +263,9 @@ int main() {
 	SPI_Cmd(SPI1, DISABLE);
   	SPI_I2S_ITConfig(SPI1, SPI_I2S_IT_RXNE, ENABLE);
 	SPI_Cmd(SPI1, ENABLE);
-	USART_Write("Received cmd: "); USART_WriteInt(cmd); USART_Write("\r\n");
+#else
+	unsigned char cmd = USART_ReadByteSync(USART1, 0);
+#endif
 
 
 	// Bit   7 defines direction hint (which can be ignored by the device)
@@ -232,13 +281,29 @@ int main() {
 
 	if (!int_image) {
 		// Keep reading for external image!
-		unsigned int spointer = 0, bl = 1;
+		unsigned int spointer = 0, bl = 1, waiter = 0;
+#ifdef UseSPI
 		while (RxIdx < sizeof(scratch)) {
 			spointer++;
 			if ((RxIdx & 0x1FFF) == 0) { blink(bl); bl = RxIdx >> 11; }
                         if ((RxIdx & 0x1FFF) == 1) bl = !bl;
 			if (spointer > 0x1000000) { USART_Write("rcv ptr: "); USART_WriteInt(RxIdx-1); USART_Write("="); USART_WriteInt(scratch[RxIdx-1]); USART_Write("\r\n"); spointer = 0; }
 		}
+#else
+		USART_StartDMA();
+		USART_Write("Received cmd: "); USART_WriteInt(cmd); USART_Write("\r\n");
+		/* Wait until USARTy RX DMA1 Channel Transfer Complete */
+		while (DMA_GetFlagStatus(DMA1_FLAG_TC5) == RESET && waiter < 0xFF00000) { waiter++; }
+		if (waiter == 0xFF00000) { USART_Write("Failed at: "); spointer = DMA_GetCurrDataCounter(DMA1_Channel5); USART_WriteInt(spointer); USART_Write(" last byte: "); USART_WriteInt(scratch[spointer - 2]); 
+USART_Write("\r\n"); waiter = 0; }
+/*
+		while (spointer < sizeof(scratch)) {
+			scratch[spointer++] = USART_ReadByteSync(USART1, &waiter);
+			if ((spointer & 0x1FFF) == 0) { blink(bl); bl = !bl; }
+			if (waiter) { USART_Write("Failed at: "); USART_WriteInt(spointer); USART_Write(" last byte: "); USART_WriteInt(scratch[spointer - 2]); USART_Write("\r\n"); waiter = 0; }
+		}
+*/
+#endif
 		USART_Write("Done receiving picture\r\n");
 		blink(0);
 	}

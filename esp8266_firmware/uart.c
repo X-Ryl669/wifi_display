@@ -80,7 +80,7 @@ uart_config(uint8 uart_no)
     SET_PERI_REG_MASK(UART_INT_ENA(uart_no), UART_RXFIFO_FULL_INT_ENA|UART_RXFIFO_OVF_INT_ENA);
 }
 
-LOCAL void ICACHE_FLASH_ATTR
+void ICACHE_FLASH_ATTR
 uart1_write_char(char c)
 {
     if (c == '\n'){

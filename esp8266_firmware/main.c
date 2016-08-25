@@ -6,9 +6,9 @@
 #include "espconn.h"
 #include "user_interface.h"
 #include "user_config.h"
-#include "uart_register.h"
+//#include "uart_register.h"
 #include "spi.h"
-
+#include "../driver_lib/include/driver/uart.h"
 #include "httpd.h"
 
 // Global settings, stored in all memories
@@ -77,6 +77,12 @@ void ICACHE_FLASH_ATTR delay_ms(int ms) {
 	}
 }
 
+#ifdef UseSPI
+#define SendByte(X) 	spi_tx8(HSPI, X)
+#else
+#define SendByte(X)	uart_tx_one_char(0, X)
+#endif
+
 void ICACHE_FLASH_ATTR screen_update(unsigned char screen_id) {
 	// Update the screen!
 	os_printf("SCREENUPDATE %d\n");
@@ -92,7 +98,7 @@ void ICACHE_FLASH_ATTR screen_update(unsigned char screen_id) {
 	delay_ms(150);
 
 	// Send the command through the UART
-	spi_tx8(HSPI, screen_id);
+	SendByte(screen_id);
 
 	// Wait around 4s for it to display the image properly
 	delay_ms(3500);
@@ -166,7 +172,7 @@ void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len
 		// Scan through the data to strip headers!
 		if ((ret = parse_answer(pdata, len)) > 302) {
 			os_printf("Bad answer from server: %d from %s\n", ret, pdata);
-			spi_tx8(HSPI, DispConnectError);
+			SendByte(DispConnectError);
 			put_back_to_sleep();
 			return;
 		}
@@ -193,7 +199,7 @@ void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len
 		if (ret == 0) {
 			header_received = 1;
 			// Tell image is coming!
-			spi_tx8(HSPI, 0x40);
+			SendByte(0x40);
 		}
 	}
 	
@@ -204,7 +210,7 @@ void ICACHE_FLASH_ATTR data_received( void *arg, char *pdata, unsigned short len
 
 
 		while (len--) {
-			spi_tx8(HSPI, *pdata++);
+			SendByte(*pdata++);
 			sentBytes++;
 			if (!(len & 4095))
 				system_soft_wdt_feed();
@@ -478,26 +484,79 @@ void ICACHE_FLASH_ATTR start_web_server() {
 	httpd_start(80, urls);
 }
 
+#define FUNC_U0CTS    4
+#define FUNC_U0RTS    4
+
+void ICACHE_FLASH_ATTR prepare_uart( void ) {
+ 
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_U0CTS);//CONFIG MTCK PIN FUNC TO U0CTS
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U, FUNC_U0RTS);//CONFIG MTDO PIN FUNC TO U0RTS
+	SET_PERI_REG_MASK(0x3ff00028 , BIT2);//SWAP PIN : U0TXD<==>U0RTS(MTDO) , U0RXD<==>U0CTS(MTCK)
+}
+extern UartDevice    UartDev;
+extern void ICACHE_FLASH_ATTR uart1_write_char(char c)
+{
+	uart_tx_one_char(1, c);
+}
 
 void ICACHE_FLASH_ATTR user_init( void ) {
 	// Init GPIO stuff
 	gpio_init();
 
-	// Set UART0 to high speed!
-	uart_div_modify( 0, UART_CLK_FREQ / ( 74880 ) ); // More decent than 460800 ) );  // 921600
-
-	os_printf("Booting...\n");
-	os_memset(&global_settings, 0, sizeof(global_settings));
-
-	// Use GPIO2 as UART0 output as well :)
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U0TXD_BK);
-
+	// 
+#ifdef UseSPI
 	// SPI setup! Ready to go!
 	spi_init(HSPI);
 	spi_mode(HSPI, 1, 1);
 	spi_init_gpio(HSPI, 0);
 	spi_clock(HSPI, 6, 29);  // Div by 174 to get 406kbps
 //	spi_clock(HSPI, 1, 20);  // Div by 20 to get 4MBps for now
+#else
+	UartDev.exist_parity = 0;
+        uart_init(460800, 115200);
+
+        os_install_putc1((void *)uart1_write_char);
+	prepare_uart(); // From now on, it'll output UART0 TX on the MTDO pin aka GPIO15 / HSPI_CS
+/*
+	// Set UART0 to high speed!
+	uart_div_modify( 0, UART_CLK_FREQ / ( 74880 ) ); // More decent than 460800 ) );  // 921600
+	// Set UART1 to high speed!
+	uart_div_modify( 1, UART_CLK_FREQ / ( 115200 ) ); // More decent than 460800 ) );  // 921600
+/**/
+
+	os_printf("Booting...\n");
+	os_memset(&global_settings, 0, sizeof(global_settings));
+
+	// Use GPIO2 as UART0 output as well :)
+//	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U1TXD_BK);
+
+#endif
+
+	// Test UART0 output at 460800, you should monitor line GPIO15 with your UART adapter and see this ONLY on the output
+/*
+        SendByte('H');
+        SendByte('e');
+        SendByte('l');
+        SendByte('l');
+        SendByte('o');
+        SendByte('\n');
+*/
+/*
+
+	delay_ms(1000);
+        uint8_t checksum = 0;
+	SendByte(0x40);
+	for (uint16_t i = 0; i < 60*1024; i++) {
+		checksum += (i & 0xFF);
+		SendByte((i & 0xFF));
+		if (!(i & 4095))
+		    system_soft_wdt_feed();
+	}
+	os_printf("Sent all 61440 bytes with checksum: %u\n", checksum);
+		os_timer_setfn(&sleep_timer, processing_timeout, (void*)1);
+		os_timer_arm(&sleep_timer, 5*60*1000, 0);
+	return;	
+/**/
 
 	// First of all read the RTC memory and check whether data is valid.
 	os_printf("Clear config setting: %d (use GPIO4 to gnd to clear)\n", clearbutton_pressed());
