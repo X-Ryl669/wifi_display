@@ -25,23 +25,39 @@ struct espconn host_conn;
 ip_addr_t host_ip;
 esp_tcp host_tcp;
 
-int sleep_time_ms = 10 * 60 * 1000;
+int sleep_time_ms = 600 * 1000;
+
+extern void system_deep_sleep(uint32);
 
 static volatile os_timer_t sleep_timer;
-void ICACHE_FLASH_ATTR put_back_to_sleep() {
-	os_printf("Goto sleep\n");
+
+void sleep_here() {
 	system_deep_sleep_set_option(1); // Full wakeup!
 	system_deep_sleep(sleep_time_ms*1000);
-	os_printf("Gone to sleep\n");
+	os_printf("Sleeping...\n"); // Yes, this message will go through
+}
+
+void ICACHE_FLASH_ATTR put_back_to_sleep() {
+	os_printf("Goto sleep for %dms in 1s (last reset: %d)\n", sleep_time_ms, system_get_rst_info()->reason);
+	os_memset(&sleep_timer, 0, sizeof(os_timer_t));
+	os_timer_disarm(&sleep_timer);
+	os_timer_setfn(&sleep_timer, (os_timer_func_t *)sleep_here, NULL);
+	os_timer_arm(&sleep_timer, 1000, 1);
 }
 
 void ICACHE_FLASH_ATTR power_gate_screen(int enable) {
-	// Set GPIO2 to output mode
+	// Set GPIO12 to output mode
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
+		gpio_output_set(0, BIT12, BIT12, 0);
 
-	// Set GPIO2 high!
-	if (enable)
+	// Set GPIO12 high!
+	if (enable) {
+		// I'm not driving the power for the STM32 through a power gating transistor here, so I've just
+		// connected the RST pin to GPIO12 here, and doing a pulse to make the chip reset
 		gpio_output_set(BIT12, 0, BIT12, 0);
+		delay_ms(10); // Wait a bit to let it reset cleanly
+		gpio_output_set(0, BIT12, BIT12, 0);
+	}
 	else
 		gpio_output_set(0, BIT12, BIT12, 0);
 }
@@ -393,8 +409,10 @@ void ICACHE_FLASH_ATTR processing_timeout(void * arg) {
 		break;
 	case 3:
 		// This is a quick reboot
-		system_deep_sleep_set_option(1); // Full wakeup!
-		system_deep_sleep(1000);  // 1ms
+		system_restart();
+		while(1) {}
+//		system_deep_sleep_set_option(1); // Full wakeup!
+//		system_deep_sleep(1000);  // 1ms
 		break;
 	}
 
@@ -502,6 +520,10 @@ extern void ICACHE_FLASH_ATTR uart1_write_char(char c)
 void ICACHE_FLASH_ATTR user_init( void ) {
 	// Init GPIO stuff
 	gpio_init();
+	// Set GPIO12 to output mode
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
+	// Set default value to 0 (low)
+	gpio_output_set(0, BIT12, BIT12, 0);
 
 	// 
 #ifdef UseSPI
@@ -517,21 +539,14 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 
         os_install_putc1((void *)uart1_write_char);
 	prepare_uart(); // From now on, it'll output UART0 TX on the MTDO pin aka GPIO15 / HSPI_CS
-/*
-	// Set UART0 to high speed!
-	uart_div_modify( 0, UART_CLK_FREQ / ( 74880 ) ); // More decent than 460800 ) );  // 921600
-	// Set UART1 to high speed!
-	uart_div_modify( 1, UART_CLK_FREQ / ( 115200 ) ); // More decent than 460800 ) );  // 921600
-/**/
 
 	os_printf("Booting...\n");
 	os_memset(&global_settings, 0, sizeof(global_settings));
 
 	// Use GPIO2 as UART0 output as well :)
 //	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U1TXD_BK);
-
+	
 #endif
-
 	// Test UART0 output at 460800, you should monitor line GPIO15 with your UART adapter and see this ONLY on the output
 /*
         SendByte('H');
@@ -555,7 +570,7 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 	os_printf("Sent all 61440 bytes with checksum: %u\n", checksum);
 		os_timer_setfn(&sleep_timer, processing_timeout, (void*)1);
 		os_timer_arm(&sleep_timer, 5*60*1000, 0);
-	return;	
+	return;
 /**/
 
 	// First of all read the RTC memory and check whether data is valid.
