@@ -46,6 +46,7 @@ void ICACHE_FLASH_ATTR put_back_to_sleep() {
 }
 
 void ICACHE_FLASH_ATTR power_gate_screen(int enable) {
+        return;
 	// Set GPIO12 to output mode
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
 		gpio_output_set(0, BIT12, BIT12, 0);
@@ -522,8 +523,11 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 	gpio_init();
 	// Set GPIO12 to output mode
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
+	gpio_output_set(BIT12, 0, BIT12, 0);
+	delay_ms(1); // Wait a bit to let it reset cleanly
 	// Set default value to 0 (low)
 	gpio_output_set(0, BIT12, BIT12, 0);
+	delay_ms(600);
 
 	// 
 #ifdef UseSPI
@@ -547,6 +551,12 @@ void ICACHE_FLASH_ATTR user_init( void ) {
 //	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U1TXD_BK);
 	
 #endif
+	// Send the magic bytes
+	SendByte((char)0x2d); 
+	delay_ms(500); // Wait a bit to let it dump to serial port correctly
+        SendByte((char)0x5a);
+	os_printf("Sent magic word...\r\n");
+
 	// Test UART0 output at 460800, you should monitor line GPIO15 with your UART adapter and see this ONLY on the output
 /*
         SendByte('H');

@@ -264,7 +264,21 @@ void SPI_Initialize() {
   	SPI_I2S_ITConfig(SPI1, SPI_I2S_IT_RXNE, ENABLE);
 	SPI_Cmd(SPI1, ENABLE);
 #else
-	unsigned char cmd = USART_ReadByteSync(USART1, 0);
+	unsigned char cmd = 0; //USART_ReadByteSync(USART1, 0);
+	// Wait for the magic word
+        while (1) {
+		while (cmd != 0x2d) { 
+                   cmd = USART_ReadByteSync(USART1, 0);
+                   USART_Write("Got 1st magic word: "); USART_WriteInt(cmd); USART_Write("\r\n");
+                }
+		cmd = USART_ReadByteSync(USART1, 0);
+                USART_Write("Got 2nd magic word: "); USART_WriteInt(cmd); USART_Write("\r\n");
+		if (cmd == 0x5a) break;
+	}
+        USART_Write("Got magic word: "); USART_WriteInt(cmd); USART_Write("\r\n");
+	
+	// Then read command
+	cmd = USART_ReadByteSync(USART1, 0);
 #endif
 
 
