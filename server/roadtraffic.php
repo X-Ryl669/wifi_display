@@ -19,6 +19,7 @@ class TrafficProvider implements ServiceProvider {
 		$this->apiKey = "";
 		$this->width = 800;
 		$this->height = 200;
+                $this->crop = array('top'=>0, 'left'=>0, 'width'=>$this->width, 'height'=>$this->height);
 		$this->colors = array("red" => "rgb(210,57,64)", "green" => "rgb(119,186,66)", "yellow" => "rgb(243,235,87)", "orange1" => "rgb(252,193,80)", "orange2" => "rgb(223,200,63)", "name" => "rgb(20,20,20)" );
 		$this->latitude = 5;
 		$this->longitude = 0;
@@ -28,7 +29,9 @@ class TrafficProvider implements ServiceProvider {
 		$out = array(
 			"api"         => array("type" => "text", "display" => "API Key", "value" => $this->apiKey),
 			"lat"         => array("type" => "fnum", "display" => "Latitude", "value" => $this->latitude),
-			"long"        => array("type" => "fnum",  "display" => "Longitude", "value" => $this->longitude)
+			"long"        => array("type" => "fnum", "display" => "Longitude", "value" => $this->longitude),
+                        "crop"        => array("type" => "text", "display" => "Crop rectange T,L,W,H", "value" => implode(',', $this->crop))
+//['top'].",".$this->crop['left'].",".$this->crop["width"].",".$this->crop["height"]);
 		);
 		if ($this->tuneColors)
 			return array_merge(array(
@@ -54,13 +57,14 @@ class TrafficProvider implements ServiceProvider {
 		}
 		$this->latitude = $v["lat"]["value"];
 		$this->longitude = $v["long"]["value"];
+                $this->crop = array_combine(['top', 'left', 'width', 'height'], array_values(explode(',', $v["crop"]["value"])));
 	}
 
     public function shape() {
 		// Return default width/height
 		return array(
-			"width"       => $this->width,
-			"height"      => $this->height,
+			"width"       => $this->crop['width'],
+			"height"      => $this->crop['height'],
 			"resizable"   => true,
 			"keep_aspect" => true,
 		);
@@ -79,6 +83,7 @@ class TrafficProvider implements ServiceProvider {
 		// For initial code see below
 		$img = new Imagick();
 		$img->readImageBlob($raw);
+                $img->cropImage($this->crop['width'], $this->crop['height'], $this->crop['left'], $this->crop['top']);
 
 		$red = clone $img;
 		// convert trafic.png -channel rgba -alpha on -fuzz 5% -fill none +opaque ".$this->colors["red"]." -fuzz 5% -fill rgb\(0,0,0\) -opaque ".$this->colors["red"]." redTrafic.png";

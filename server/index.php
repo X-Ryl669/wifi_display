@@ -36,6 +36,12 @@ if ($action == "renderpng") {
 if ($action == "rendereink") {
 	$im = renderBMP($id, $numc, 0, 0);
 
+    if (date('G') > 20 && date('G') < 6)
+        // Night time, we can sleep more (30mn interval)
+        header('Sleep-Duration-Ms: 1800000');
+    else
+        header('Sleep-Duration-Ms: 600000');
+
     header('Content-type: application/octet-stream');
     header('Content-Length: 61440');
 

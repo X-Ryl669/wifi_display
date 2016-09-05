@@ -13,6 +13,7 @@ class WeatherProvider implements ServiceProvider {
 
 	function WeatherProvider() {
 		$this->location = "Barcelona,ES";
+                $this->lang = "en";
 		$this->width = 400;
 		$this->height = 200;
 		$this->font_size = 0.65;
@@ -22,12 +23,14 @@ class WeatherProvider implements ServiceProvider {
     public function getTunables() {
 		return array(
 			"location"    => array("type" => "text", "display" => "Location", "value" => $this->location),
+                        "lang"        => array("type" => "text", "display" => "Language code", "value" => $this->lang),
 			"font_family" => array("type" => "text", "display" => "Font Family", "value" => $this->font_family),
 			"font_size"   => array("type" => "fnum", "display" => "Font Size", "value" => $this->font_size)
 		);
 	}
     public function setTunables($v) {
 		$this->location = $v["location"]["value"];
+                $this->lang = $v["location"]["value"];
 		$this->font_family = $v["font_family"]["value"];
 		$this->font_size = $v["font_size"]["value"];
 	}
@@ -44,7 +47,7 @@ class WeatherProvider implements ServiceProvider {
 
     public function render() {
 		// Gather information from OpenWeatherMap
-		$raw = file_get_contents("http://api.openweathermap.org/data/2.5/weather?q=".$this->location."&APPID=".GlobalConfig::$weather_api_key);
+		$raw = file_get_contents("http://api.openweathermap.org/data/2.5/weather?q=".$this->location."&APPID=".GlobalConfig::$weather_api_key.($this->lang ? "&lang=".$this->lang : ""));
 		$weather = json_decode($raw, true);
 
 		$icon = $weather["weather"][0]["icon"];

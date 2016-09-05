@@ -14,6 +14,7 @@ class WeatherForecastProvider implements ServiceProvider {
 
 	function WeatherForecastProvider() {
 		$this->location = "Barcelona,ES";
+                $this->lang = "en";
 		$this->width = 1000;
 		$this->height = 200;
 		$this->font_size = 0.15;
@@ -24,6 +25,7 @@ class WeatherForecastProvider implements ServiceProvider {
     public function getTunables() {
 		return array(
 			"location"    => array("type" => "text", "display" => "Location", "value" => $this->location),
+			"lang"        => array("type" => "text", "display" => "Language code", "value" => $this->lang),
 			"font_family" => array("type" => "text", "display" => "Font Family", "value" => $this->font_family),
 			"font_size"   => array("type" => "fnum", "display" => "Font Size", "value" => $this->font_size),
 			"ndays"       => array("type" => "num",  "display" => "Number of days", "value" => $this->ndays)
@@ -31,6 +33,7 @@ class WeatherForecastProvider implements ServiceProvider {
 	}
     public function setTunables($v) {
 		$this->location = $v["location"]["value"];
+                $this->lang = $v["lang"]["value"];
 		$this->font_family = $v["font_family"]["value"];
 		$this->font_size = $v["font_size"]["value"];
 		$this->ndays = $v["ndays"]["value"];
@@ -49,7 +52,7 @@ class WeatherForecastProvider implements ServiceProvider {
     public function render() {
 		// Gather information from OpenWeatherMap
 		$raw = file_get_contents(
-			"http://api.openweathermap.org/data/2.5/forecast/daily?cnt=".($this->ndays+1)."&q=".$this->location."&APPID=".GlobalConfig::$weather_api_key
+			"http://api.openweathermap.org/data/2.5/forecast/daily?cnt=".($this->ndays+1)."&q=".$this->location."&APPID=".GlobalConfig::$weather_api_key.($this->lang ? "&lang=".$this->lang : "")
 		);
 		$weather = json_decode($raw, true);
 
@@ -57,9 +60,10 @@ class WeatherForecastProvider implements ServiceProvider {
 
 		$daily = array();
 		$nd = count($forecast)-1;
+                if ($this->lang) setlocale(LC_TIME, $this->lang."_".strtoupper($this->lang));
 		for ($i = 0; $i < $nd; $i++) {
 			$icon = $forecast[$i+1]["weather"][0]["icon"];
-			$dayn = date('D', $forecast[$i+1]["dt"]);
+			$dayn = substr(ucfirst(strftime("%A", $forecast[$i+1]["dt"])), 0, 3); //date('D', $forecast[$i+1]["dt"]);
 			$mint = $forecast[$i+1]["temp"]["min"] - 273.15;
 			$maxt = $forecast[$i+1]["temp"]["max"] - 273.15;
 
