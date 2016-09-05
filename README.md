@@ -50,16 +50,18 @@ See below for changes...
 
 Changes
 -------
-I've changed the code for both CPU to use UART lines instead of SPI.
-I've added support for header line parsing in the HTTP response so the server can decide how often the ESP8266 wakes up (or how long it'll sleep).
-I've added support for storing the server's and WIFI information in the ESP's flash (so it survives power drop). If you need to reset this parameters, boot with a wire between GPIO4 and GND on the ESP8266.
-I've changed the code so the ESP8266 actually sleeps (David's code had a bug with it and it failed entering sleep and restarted due to watchdog instead every 30s or so). Sleep time is 10mn by default.
-The server's weather widgets have been updated to support multi-languages.
-I've added a traffic information widget (you need to register for BingMap api to use it, it's free) and made the required code to transform a 24bits per pixel to 4bits per pixel picture.
-Soon, there'll also be a Caldav's next event remainder widget...
-I've made a case for it if you have access to a 3D printer: https://cad.onshape.com/documents/366875cd2b4c0add4211b015/w/173325f8378b7a2f71e5b032/e/1de13be82e26fd3fe2a156ce
+
+- I've changed the code for both CPU to use UART lines instead of SPI.
+- I've added support for header line parsing in the HTTP response so the server can decide how often the ESP8266 wakes up (or how long it'll sleep).
+- I've added support for storing the server's and WIFI information in the ESP's flash (so it survives power drop). If you need to reset this parameters, boot with a wire between GPIO4 and GND on the ESP8266.
+- I've changed the code so the ESP8266 actually sleeps (David's code had a bug with it and it failed entering sleep and restarted due to watchdog instead every 30s or so). Sleep time is 10mn by default.
+- The server's weather widgets have been updated to support multi-languages.
+- I've added a traffic information widget (you need to register for BingMap api to use it, it's free) and made the required code to transform a 24bits per pixel to 4bits per pixel picture.
+- Soon, there'll also be a Caldav's next event remainder widget...
+- I've made a case for it if you have access to a 3D printer: https://cad.onshape.com/documents/366875cd2b4c0add4211b015/w/173325f8378b7a2f71e5b032/e/1de13be82e26fd3fe2a156ce
+
 You can hang it on the wall, with the 2 part of the assembly if you need it.
-[!Some pictures][http://imgur.com/MejbGxD.png]
+![Some pictures](http://imgur.com/MejbGxD.png)
  
  
 
