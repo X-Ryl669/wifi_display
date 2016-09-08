@@ -9,6 +9,7 @@ require_once("stock.php");
 require_once("btc.php");
 require_once("forecast.php");
 require_once("roadtraffic.php");
+require_once("calevents.php");
 
 function array2js($a) {
 	if (is_array($a)) {
@@ -21,6 +22,23 @@ function array2js($a) {
 		return "'$a'";
 
 	return $a;
+}
+
+// Because both Inkscape and RSVG renderer do not support textLength attribute for text element in SVG, we need to compute the text length by ourselves
+function calculateTextBox($text, $font, $fontSizePx, $fontAngle) {
+    $fontPath =  dirname(__FILE__).'/fonts/'.strtolower($font).".ttf";
+    $rect = imagettfbbox(floor($fontSizePx / 1.33), $fontAngle, $fontPath, $text);
+    $minX = min(array($rect[0],$rect[2],$rect[4],$rect[6]));
+    $maxX = max(array($rect[0],$rect[2],$rect[4],$rect[6]));
+    $minY = min(array($rect[1],$rect[3],$rect[5],$rect[7]));
+    $maxY = max(array($rect[1],$rect[3],$rect[5],$rect[7]));
+
+    return array(
+     "left"   => abs($minX) - 1,
+     "top"    => abs($minY) - 1,
+     "width"  => $maxX - $minX,
+     "height" => $maxY - $minY,
+     "box"    => $rect);
 }
 
 class Providers {

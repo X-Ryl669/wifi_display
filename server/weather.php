@@ -59,13 +59,15 @@ class WeatherProvider implements ServiceProvider {
 				xmlns:xlink="http://www.w3.org/1999/xlink">
 				<image x="%d" y="%d" width="%d" height="%d" xlink:href="%s" />
                 <text text-anchor="end" x="%d" y="%d" fill="black" style="font-size: %dpx; font-style: %s; font-weight: bold;">%d°</text>
+		<text text-anchor="end" x="%d" y="%d" fill="#555555" style="font-size: %dpx; font-style: %s;">%s</text>
 			</svg>', $this->width, $this->height,
 				0.03 * $this->width, 0.05 * $this->height,
 				0.45 * $this->width, 0.9 * $this->height,
 				ProviderAux::embedSVG("resources/".$this->imgmap[$icon].".svg"),
 				$this->width, ($this->font_size/3.0 + 0.5) * $this->height, $this->font_size * $this->height,
 				$this->font_family,
-				round($temp)
+				round($temp),
+				$this->width, $this->height, $this->font_size * $this->height * 0.4, $this->font_family, strftime("%H:%M")
 		);
 	}
 
