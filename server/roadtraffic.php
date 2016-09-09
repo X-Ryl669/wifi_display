@@ -23,6 +23,7 @@ class TrafficProvider implements ServiceProvider {
 		$this->colors = array("red" => "rgb(210,57,64)", "green" => "rgb(119,186,66)", "yellow" => "rgb(243,235,87)", "orange1" => "rgb(252,193,80)", "orange2" => "rgb(223,200,63)", "name" => "rgb(20,20,20)" );
 		$this->latitude = 5;
 		$this->longitude = 0;
+                $this->tuneColors = false;
 	}
 
     public function getTunables() {

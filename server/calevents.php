@@ -82,10 +82,14 @@ class CalendarProvider implements ServiceProvider {
                 }
 
                 // Need to figure out the maximum size for each event so we can deduce the best font size
-		$fontSize = min(floor($this->height / count($events)), floor($this->width / $maxLen));
+                $nbEvents = count($events);
+		if (!$nbEvents) return sprintf('<svg width="%d" height="%d" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><text text-anchor="start" x="0" y="%d" fill="#AAAAAA" style="font-size: %dpx; font-family: %s;">No upcoming events</text></svg>', $this->width, $this->height, $this->height * 4 / 6, $this->height / 3.2, $this->font_family);
+
+		$fontSize = min(floor($this->height / $nbEvents), floor($this->width / $maxLen));
 		$ar = $this->height / $this->width;
-		$fontSize = floor($this->height / max(count($events), 3));// * $ar;
+		$fontSize = floor($this->height / max($nbEvents, 3));// * $ar;
 		$text = ""; $i = 0;
+                $prevDay =  $maxLen ? substr($events[0]['time'], 0, 8) : '';
 		foreach($events as $ev) {
 			$text .= sprintf('<rect x="%d" y="%g" height="%d" width="%d" rx="10" ry="10" fill="#AAAAAA" />', 0, $i + $fontSize * 0.19, floor($fontSize * 0.9), $this->width / 6.0 + 8);
                         // Because support for textLength and lenghtAdjust is missing in RSVG and inkscape, ImageMagick renders these lines below ugly.
@@ -95,6 +99,9 @@ class CalendarProvider implements ServiceProvider {
                         // So, we need to compute the actual size for the text by ourselves
                         $nameLen = calculateTextBox(ucfirst($ev['user']), $this->font_family, $fontSize * 0.8, 0);
                         $timeLen = calculateTextBox($this->fromTime($ev['time']), $this->font_family, $fontSize, 0);
+                        // Draw a line when changing day in the event list
+                        $day = substr($ev['time'], 0, 8);
+                        if ($day != $prevDay) { $text .= sprintf('<rect x="0" y="%g" height="1" width="%d" fill="#000000" />', $i + 3, $this->width); $prevDay = $day; }
                         // Then compute the text transform scale
                         $text .= sprintf('<text text-anchor="start" x="%d" y="%d" fill="#FFFFFF" style="font-size: %dpx; font-family: %s;" transform="translate(0, 0) scale(%g, 1.0)">%s</text>', 0, $i+floor($fontSize * 0.9),
                                                 floor($fontSize * 0.8), $this->font_family, $this->width/6.0 / $nameLen['width'],ucfirst($ev['user']));
@@ -102,6 +109,7 @@ class CalendarProvider implements ServiceProvider {
                                                 $fontSize, $this->font_family, $this->width / 6.0 + 16, $this->width/8.0 / $timeLen['width'], $this->fromTime($ev['time']));
 			$text .= sprintf('<text text-anchor="start" x="%d" y="%d" fill="black" style="font-size: %dpx; font-family: %s;">%s</text>', $this->width/8.0 + $this->width/6.0 + 32, $i+$fontSize, $fontSize, $this->font_family, $ev['text']);
                         
+
 			$i += $fontSize;
 		}
 

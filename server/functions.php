@@ -79,6 +79,7 @@ function renderSVG($id) {
 	$scr = json_decode($scr, true);
 
 
+        $bbox = array('t' => 65535, 'l' => 65535, 'b' => -65535, 'r' => -65535);
 	$body = array();
 	for ($i = 0; $i < count($scr["widgets"]); $i++) {
 		$widget = $scr["widgets"][$i];
@@ -88,13 +89,13 @@ function renderSVG($id) {
 
 		$wi = Providers::getRender($widget["type"], $params, $widget["geo"]["w"] * $scr["width"], $widget["geo"]["h"] * $scr["height"]);
 
-		$body[] = sprintf('<image x="%d" y="%d" width="%d" height="%d" xlink:href="%s" />',
-		                  $widget["geo"]["x"] * $scr["width"],
-		                  $widget["geo"]["y"] * $scr["height"],
-		                  $widget["geo"]["w"] * $scr["width"],
-		                  $widget["geo"]["h"] * $scr["height"],
-		                  "data:image/svg+xml;base64,".base64_encode($wi)
-		          );
+                $x = $widget["geo"]["x"] * $scr["width"]; $y = $widget["geo"]["y"] * $scr["height"]; $w = $widget["geo"]["w"] * $scr["width"]; $h = $widget["geo"]["h"] * $scr["height"];
+		$body[] = sprintf('<image x="%d" y="%d" width="%d" height="%d" xlink:href="%s" />', $x, $y, $w, $h, "data:image/svg+xml;base64,".base64_encode($wi));
+
+                if ($x < $bbox['l']) $bbox['l'] = $x;
+                if ($y < $bbox['t']) $bbox['t'] = $y;
+                if ($x+$w > $bbox['r']) $bbox['r'] = $x+$w;
+                if ($y+$h > $bbox['b']) $bbox['b'] = $y+$h;
 	}
 
 	$body = implode("\n", $body);
@@ -107,6 +108,7 @@ function renderSVG($id) {
 	return array(
 		"width"  => $scr["width"],
 		"height" => $scr["height"],
+                "bbox"   => $bbox,
 		"svg"    => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>'.$svg
 	);
 }
@@ -117,8 +119,32 @@ function renderBMP($id, $numc, $maxwidth, $maxheight) {
 	$svg = $data["svg"];
 	// Convert to PNG and scale
 	$im = new Imagick();
+        // Create output palette as PGM
+        $palette = sprintf('P2 1 %d 255\n', $numc);
+        for ($i = 0; $i < $numc; $i++) $palette .= floor($i * 255 / ($numc - 1)).' ';
+        $pal = new Imagick();
+        $pal->readImageBlob($palette);
+
+        // Because there is a bug in the SVG rendered in Imagick when the drawn elements are 
+        // out of the viewport (they should be clipped and not be accounted for in the total width)
+        // but they are only clipped, resulting in smaller picture with a large border, so we need to enlarge them at first, to crop the picture in the end
+        $enlargeFactor = max(($data['bbox']['r'] - $data['bbox']['l']) / $data["width"], ($data['bbox']['b'] - $data['bbox']['t']) / $data["height"]);
+        if ($enlargeFactor < 1.0) {
+                // If the picture is smaller than the expected size, make it at least the expected size
+                // Imagick does not play well in that case, and figure itself a bounding box that's not logic.
+                // So, let it compute its bounding box, and enlarge the canvas to the final picture is exactly the size we expect (instead of resizing a small picture, let it draw to fit the expected size)
+                $newIm = new Imagick();
+                $newIm->readImageBlob($svg);
+                $dim = $newIm->getImageGeometry();
+                $enlargeFactor = min($data['width'] / $dim['width'], $data['height'] / $dim['height']); // Must fit at the minimum size here
+        }
+        $im->setResolution(72 * $enlargeFactor, 72 * $enlargeFactor);
+        $im->setBackgroundColor('white');
 	$im->readImageBlob($svg);
+        $im = $im->flattenImages();
 	$im->setImageFormat("png24");
+//        $dim = $im->getImageGeometry();
+//        var_dump($dim); exit(0);
 
 	// Apply max sizes
 	$width = $data["width"];
@@ -134,11 +160,19 @@ function renderBMP($id, $numc, $maxwidth, $maxheight) {
 		$width = $height * $ar;
 	}
 
-	$im->resizeImage($width, $height, imagick::FILTER_LANCZOS, 1);
+        $im->cropImage($width, $height, max(-$data['bbox']['l'], 0), max(-$data['bbox']['t'], 0));
+        if (($data['bbox']['r'] - $data['bbox']['l']) < $width || ($data['bbox']['b'] - $data['bbox']['t']) < height) 
+        {
+                $im->setImagePage($width, $height, 0, 0);
+                $im = $im->flattenImages();
+        }
+        else $im->setImagePage(0, 0, 0, 0);
+//	$im->resizeImage($width, $height, imagick::FILTER_LANCZOS, 1);
 
 	// Set to gray
 	$im->transformImageColorspace(imagick::COLORSPACE_GRAY);
-	$im->posterizeImage($numc, imagick::DITHERMETHOD_NO);
+//	$im->posterizeImage($numc, imagick::DITHERMETHOD_NO);
+        $im->mapImage($pal, false);
 
 	if (isset($_GET["inv"]))
 		$im->negateImage(false);
