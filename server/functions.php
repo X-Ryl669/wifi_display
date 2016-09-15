@@ -9,6 +9,7 @@ require_once("stock.php");
 require_once("btc.php");
 require_once("forecast.php");
 require_once("roadtraffic.php");
+require_once("transittime.php");
 require_once("calevents.php");
 
 function array2js($a) {
