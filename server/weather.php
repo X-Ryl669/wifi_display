@@ -48,14 +48,20 @@ class WeatherProvider implements ServiceProvider {
     public function render() {
 		// Gather information from OpenWeatherMap
 		$raw = file_get_contents("http://api.openweathermap.org/data/2.5/weather?q=".$this->location."&APPID=".GlobalConfig::$weather_api_key.($this->lang ? "&lang=".$this->lang : ""));
+                $currentTime = time();
+                if ($raw === FALSE) {
+                        $raw = file_get_contents("screens/weather.cache");
+                        $currentTime = filemtime("screens/weather.cache");
+                } else
+                        file_put_contents("screens/weather.cache", $raw);
 		$weather = json_decode($raw, true);
 
 		$icon = $weather["weather"][0]["icon"];
 		$temp = $weather["main"]["temp"] - 273.15;
 
-		// Generate an SVG image out of this 
+		// Generate an SVG image out of this
 		return sprintf(
-			'<svg width="%d" height="%d" version="1.1" xmlns="http://www.w3.org/2000/svg" 
+			'<svg width="%d" height="%d" version="1.1" xmlns="http://www.w3.org/2000/svg"
 				xmlns:xlink="http://www.w3.org/1999/xlink">
 				<image x="%d" y="%d" width="%d" height="%d" xlink:href="%s" />
                 <text text-anchor="end" x="%d" y="%d" fill="black" style="font-size: %dpx; font-style: %s; font-weight: bold;">%d°</text>
@@ -67,7 +73,7 @@ class WeatherProvider implements ServiceProvider {
 				$this->width, ($this->font_size/3.0 + 0.5) * $this->height, $this->font_size * $this->height,
 				$this->font_family,
 				round($temp),
-				$this->width, $this->height, $this->font_size * $this->height * 0.4, $this->font_family, strftime("%H:%M")
+				$this->width, $this->height, $this->font_size * $this->height * 0.4, $this->font_family, strftime("%H:%M", $currentTime)
 		);
 	}
 

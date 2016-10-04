@@ -162,7 +162,7 @@ function renderBMP($id, $numc, $maxwidth, $maxheight) {
 	}
 
         $im->cropImage($width, $height, max(-$data['bbox']['l'], 0), max(-$data['bbox']['t'], 0));
-        if (($data['bbox']['r'] - $data['bbox']['l']) < $width || ($data['bbox']['b'] - $data['bbox']['t']) < height) 
+        if (($data['bbox']['r'] - $data['bbox']['l']) < $width || ($data['bbox']['b'] - $data['bbox']['t']) < $height)
         {
                 $im->setImagePage($width, $height, 0, 0);
                 $im = $im->flattenImages();

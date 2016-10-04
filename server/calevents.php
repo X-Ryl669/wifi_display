@@ -50,7 +50,7 @@ class CalendarProvider implements ServiceProvider {
 	}
 
         private function makeTime($shift = 0) {
-                return strftime("%G%m%dT%H%M%SZ", time() + ($shift * 3600));
+                return strftime("%G%m%dT%H%M%SZ", time() + ($shift * 3600) - date("Z"));
         }
 	private function fromTime($time) {
 		return substr($time, 9, 2).":".substr($time,11,2);

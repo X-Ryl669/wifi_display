@@ -557,7 +557,7 @@ class ICal
             }
             if (isset($anEvent['RRULE']) && $anEvent['RRULE'] != '') {
                 // Remember the identification as it can be referred as a RECURRENCE-ID for later events
-                if (!isset($anEvent['RECURRENCE-ID'])) $rruleID[$anEvent['UID'].' '.$anEvent['SEQUENCE']] = $anEvent['RRULE'];
+                //if (!isset($anEvent['RECURRENCE-ID'])) $rruleID[$anEvent['UID'].' '.$anEvent['SEQUENCE']] = $anEvent['RRULE'];
                 // Recurring event, parse RRULE and add appropriate duplicate events
                 $rrules = array();
                 $rruleStrings = explode(';', $anEvent['RRULE']);

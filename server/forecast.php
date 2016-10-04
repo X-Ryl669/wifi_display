@@ -54,6 +54,9 @@ class WeatherForecastProvider implements ServiceProvider {
 		$raw = file_get_contents(
 			"http://api.openweathermap.org/data/2.5/forecast/daily?cnt=".($this->ndays+1)."&q=".$this->location."&APPID=".GlobalConfig::$weather_api_key.($this->lang ? "&lang=".$this->lang : "")
 		);
+                if ($raw === FALSE)
+                        $raw = file_get_contents("screens/forecast.cache");
+                else    file_put_contents("screens/forecast.cache", $raw);
 		$weather = json_decode($raw, true);
 
 		$forecast = $weather["list"];
